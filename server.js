@@ -108,7 +108,14 @@ class FinOpsEngine {
 const app = express();
 app.use(express.json());
 
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+// Auto-detect OS for correct Docker endpoint binding (Windows vs Linux)
+const isWindows = process.platform === 'win32';
+const docker = new Docker(
+  isWindows 
+    ? { socketPath: '//./pipe/docker_engine' } 
+    : { socketPath: '/var/run/docker.sock' }
+);
+
 const finOps = new FinOpsEngine(docker);
 const connection = { host: process.env.REDIS_HOST || '127.0.0.1', port: 6379 };
 
