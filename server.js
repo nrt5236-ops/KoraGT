@@ -14,22 +14,30 @@ class NISTAuditor {
         if (!config.User || config.User === '0' || config.User === 'root') {
             auditLog.push({ check: 'USER_EXECUTION', status: 'FAIL', detail: 'Root execution prohibited.' });
             passed = false;
+        } else {
+            auditLog.push({ check: 'USER_EXECUTION', status: 'PASS', detail: 'Non-root user verified.' });
         }
 
         if (!config.HostConfig?.ReadonlyRootfs) {
             auditLog.push({ check: 'READONLY_ROOTFS', status: 'FAIL', detail: 'Read-write root filesystem detected.' });
             passed = false;
+        } else {
+            auditLog.push({ check: 'READONLY_ROOTFS', status: 'PASS', detail: 'Readonly rootfs enabled.' });
         }
 
         if (!config.HostConfig?.CapDrop?.includes('ALL')) {
             auditLog.push({ check: 'CAPABILITY_STRIPPING', status: 'FAIL', detail: '--cap-drop=ALL missing.' });
             passed = false;
+        } else {
+            auditLog.push({ check: 'CAPABILITY_STRIPPING', status: 'PASS', detail: 'Capabilities stripped successfully.' });
         }
 
         const restartPolicy = config.HostConfig?.RestartPolicy?.Name;
         if (!['always', 'unless-stopped'].includes(restartPolicy)) {
             auditLog.push({ check: 'RESTART_POLICY', status: 'FAIL', detail: 'Must use "always" or "unless-stopped" for persistent server resilience.' });
             passed = false;
+        } else {
+            auditLog.push({ check: 'RESTART_POLICY', status: 'PASS', detail: 'Valid restart policy set.' });
         }
 
         const secOpts = config.HostConfig?.SecurityOpt || [];
@@ -37,6 +45,8 @@ class NISTAuditor {
         if (!hasSeccomp) {
             auditLog.push({ check: 'SECCOMP_PROFILE', status: 'FAIL', detail: 'Default Seccomp profile missing.' });
             passed = false;
+        } else {
+            auditLog.push({ check: 'SECCOMP_PROFILE', status: 'PASS', detail: 'Seccomp profile verified.' });
         }
 
         return { approved: passed, auditLog };
@@ -63,20 +73,17 @@ class FinOpsEngine {
             let memoryUsageMb = 0.0;
 
             if (c.State === 'running') {
-                const stats = await container.stats({ stream: false });
-                
-                const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
-                const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
-                const numberCpus = stats.cpu_stats.online_cpus || 1;
-                if (systemDelta > 0.0 && cpuDelta > 0.0) {
-                    cpuUsagePct = (cpuDelta / systemDelta) * numberCpus * 100.0;
-                }
-                memoryUsageMb = (stats.memory_stats.usage || 0) / (1024 * 1024);
-
-                if (cpuUsagePct < this.idleThresholdCpu) {
-                    console.log(`[FINOPS] Suspending idle container ${c.Id.substring(0, 8)} (${cpuUsagePct.toFixed(1)}% CPU)`);
-                    await container.stop();
-                    c.State = 'auto_suspended';
+                try {
+                    const stats = await container.stats({ stream: false });
+                    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
+                    const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
+                    const numberCpus = stats.cpu_stats.online_cpus || 1;
+                    if (systemDelta > 0.0 && cpuDelta > 0.0) {
+                        cpuUsagePct = (cpuDelta / systemDelta) * numberCpus * 100.0;
+                    }
+                    memoryUsageMb = (stats.memory_stats.usage || 0) / (1024 * 1024);
+                } catch (e) {
+                    // Fallback if stats fail temporarily
                 }
             }
 
@@ -85,6 +92,7 @@ class FinOpsEngine {
                 name: c.Names[0].replace('/', ''),
                 image: c.Image,
                 id: c.Id.substring(0, 8),
+                fullId: c.Id,
                 status: c.State,
                 cpu: parseFloat(cpuUsagePct.toFixed(1)),
                 memory: parseFloat(memoryUsageMb.toFixed(0)),
@@ -100,8 +108,6 @@ class FinOpsEngine {
 // ============================================================================
 const app = express();
 app.use(express.json());
-
-// Serves index.html directly from the root KoraGT folder
 app.use(express.static(path.join(__dirname)));
 
 const isWindows = process.platform === 'win32';
@@ -129,6 +135,7 @@ const worker = new Worker('container-ops', async (job) => {
     return { containerId, status: action + '_COMPLETED' };
 }, { connection });
 
+// API: List Containers & Metrics
 app.get('/api/containers', async (req, res) => {
     try {
         const metrics = await finOps.getDashboardMetrics();
@@ -138,19 +145,56 @@ app.get('/api/containers', async (req, res) => {
     }
 });
 
+// API: Container Lifecycle Actions
+app.post('/api/containers/:id/action', async (req, res) => {
+    const { action } = req.body;
+    const job = await containerQueue.add('lifecycle', { action: action.toUpperCase(), containerId: req.params.id });
+    res.status(202).json({ message: `Action ${action} queued`, jobId: job.id });
+});
+
+// API: NIST Audit & Deploy
 app.post('/api/containers/deploy', async (req, res) => {
     const auditResult = NISTAuditor.auditManifest(req.body);
     if (!auditResult.approved) {
         return res.status(422).json({ error: 'Security Audit Failed', log: auditResult.auditLog });
     }
     const job = await containerQueue.add('deploy', { action: 'DEPLOY', config: req.body });
-    res.status(202).json({ message: 'Deployment queued', jobId: job.id });
+    res.status(202).json({ message: 'Deployment queued', jobId: job.id, auditLog: auditResult.auditLog });
 });
 
-app.post('/api/containers/:id/action', async (req, res) => {
-    const { action } = req.body;
-    const job = await containerQueue.add('lifecycle', { action: action.toUpperCase(), containerId: req.params.id });
-    res.status(202).json({ message: `Action ${action} queued`, jobId: job.id });
+// API: Job Queue Status
+app.get('/api/jobs', async (req, res) => {
+    try {
+        const waiting = await containerQueue.getWaiting();
+        const active = await containerQueue.getActive();
+        const completed = await containerQueue.getCompleted();
+        const failed = await containerQueue.getFailed();
+
+        const formatJob = (j) => ({ id: j.id, name: j.name, data: j.data, timestamp: j.timestamp });
+
+        res.json({
+            counts: { waiting: waiting.length, active: active.length, completed: completed.length, failed: failed.length },
+            jobs: [...active, ...waiting, ...completed.slice(0, 10)].map(formatJob)
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API: Container Logs Stream
+app.get('/api/containers/:id/logs', async (req, res) => {
+    try {
+        const container = docker.getContainer(req.params.id);
+        const logs = await container.logs({
+            stdout: true,
+            stderr: true,
+            tail: 100,
+            timestamps: true
+        });
+        res.send(logs.toString('utf8'));
+    } catch (err) {
+        res.status(500).send(`Error retrieving logs: ${err.message}`);
+    }
 });
 
 const PORT = process.env.PORT || 3000;
