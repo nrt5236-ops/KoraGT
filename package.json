@@ -1,0 +1,15 @@
+{
+  "name": "koragt-engine-unified",
+  "version": "1.1.0",
+  "description": "KoraGT Unified Control Plane & FinOps Engine",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "bullmq": "^5.1.0",
+    "dockerode": "^4.0.2",
+    "express": "^4.19.2",
+    "ioredis": "^5.3.2"
+  }
+}
