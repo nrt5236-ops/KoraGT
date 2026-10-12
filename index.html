@@ -51,6 +51,9 @@
         .tab { padding: 10px 0; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
         .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
 
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
         .controls-panel {
             background-color: var(--bg-panel);
             border: 1px solid var(--border);
@@ -68,8 +71,8 @@
         th, td { padding: 15px 20px; text-align: left; border-bottom: 1px solid var(--border); }
         th { color: var(--text-muted); font-weight: 500; font-size: 14px; }
         td { font-size: 15px; }
-        .status { color: #4ade80; }
-        .status.stopped { color: #f87171; }
+        .status { color: #4ade80; text-transform: uppercase; font-size: 12px; font-weight: bold; }
+        .status.stopped, .status.exited { color: #f87171; }
         
         .btn-group { display: flex; gap: 8px; }
         button {
@@ -84,6 +87,13 @@
         button:hover { background-color: var(--border); }
         .cpu-bar { width: 100px; height: 6px; background: var(--border); border-radius: 3px; display: inline-block; vertical-align: middle; margin-right: 10px; }
         .cpu-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; color: var(--text-muted); font-size: 13px; margin-bottom: 5px; }
+        .form-group input, .form-group textarea { width: 100%; padding: 10px; background: var(--bg-base); border: 1px solid var(--border); color: var(--text-main); border-radius: 4px; font-family: monospace; }
+        pre.audit-output { background: #090d0f; padding: 15px; border-radius: 6px; border: 1px solid var(--border); font-size: 13px; color: #4ade80; overflow-x: auto; }
+        pre.audit-output.fail { color: #f87171; }
+        pre.log-output { background: #090d0f; padding: 15px; border-radius: 6px; border: 1px solid var(--border); font-size: 13px; color: var(--text-main); height: 350px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -118,40 +128,125 @@
     </div>
 
     <div class="tabs">
-        <div class="tab active">Containers</div>
-        <div class="tab">Deploy and audit</div>
-        <div class="tab">Job queue</div>
-        <div class="tab">Live logs</div>
+        <div class="tab active" onclick="switchTab('containers')">Containers</div>
+        <div class="tab" onclick="switchTab('deploy')">Deploy and audit</div>
+        <div class="tab" onclick="switchTab('queue')">Job queue</div>
+        <div class="tab" onclick="switchTab('logs')">Live logs</div>
     </div>
 
-    <div class="controls-panel">
-        <span style="font-weight: 500;">Idle threshold: <span id="val-threshold">2.0</span>% CPU</span>
-        <input type="range" min="0" max="10" step="0.1" value="2.0" class="slider" id="threshold-slider">
-        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-left: 20px;">
-            <input type="checkbox" id="auto-stop-chk" checked>
-            Stop idle containers automatically
-        </label>
+    <!-- TAB 1: CONTAINERS -->
+    <div id="tab-containers" class="tab-content active">
+        <div class="controls-panel">
+            <span style="font-weight: 500;">Idle threshold: <span id="val-threshold">2.0</span>% CPU</span>
+            <input type="range" min="0" max="10" step="0.1" value="2.0" class="slider" id="threshold-slider">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-left: 20px;">
+                <input type="checkbox" id="auto-stop-chk" checked>
+                Stop idle containers automatically
+            </label>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>CPU</th>
+                    <th>Memory</th>
+                    <th>Burn/hr</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="container-table-body">
+                <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Loading containers...</td></tr>
+            </tbody>
+        </table>
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>ID</th>
-                <th>Status</th>
-                <th>CPU</th>
-                <th>Memory</th>
-                <th>Burn/hr</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody id="container-table-body">
-            <!-- Rows populated by JS -->
-        </tbody>
-    </table>
+    <!-- TAB 2: DEPLOY AND AUDIT -->
+    <div id="tab-deploy" class="tab-content">
+        <div class="metric-card" style="max-width: 800px;">
+            <h3>Deploy Container with NIST SP 800-190 Compliance Audit</h3>
+            <p class="subtitle" style="margin-bottom: 20px;">Submitting an unsafe configuration (e.g., running as root or missing security profiles) will trigger an admission denial.</p>
+            
+            <div class="form-group">
+                <label>Container Image</label>
+                <input type="text" id="deploy-image" value="nginx:latest">
+            </div>
+            <div class="form-group">
+                <label>Container Name</label>
+                <input type="text" id="deploy-name" value="secure-nginx">
+            </div>
+            <div class="form-group">
+                <label>JSON Manifest Configuration (HostConfig & User)</label>
+                <textarea id="deploy-config" rows="8">{
+  "Image": "nginx:latest",
+  "name": "secure-nginx",
+  "User": "1000:1000",
+  "HostConfig": {
+    "ReadonlyRootfs": true,
+    "CapDrop": ["ALL"],
+    "RestartPolicy": { "Name": "unless-stopped" },
+    "SecurityOpt": ["seccomp=default"]
+  }
+}</textarea>
+            </div>
+            <button onclick="deployContainer()" style="background: var(--accent); color: #000; font-weight: bold; padding: 10px 20px;">Run NIST Audit & Deploy</button>
+            
+            <div style="margin-top: 20px;">
+                <label>Audit & Deployment Result Log:</label>
+                <pre id="deploy-result" class="audit-output">Awaiting deployment dispatch...</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB 3: JOB QUEUE -->
+    <div id="tab-queue" class="tab-content">
+        <div class="metric-card">
+            <h3>BullMQ Asynchronous Operations Queue</h3>
+            <p class="subtitle" style="margin-bottom: 20px;">Real-time queue tracking for container deployments and lifecycle operations.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Action / Type</th>
+                        <th>Payload Data</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody id="job-table-body">
+                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading queue status...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- TAB 4: LIVE LOGS -->
+    <div id="tab-logs" class="tab-content">
+        <div class="metric-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3>Container Real-Time Stream Logs</h3>
+                <select id="log-container-select" onchange="fetchLogs()" style="background: var(--bg-base); color: var(--text-main); border: 1px solid var(--border); padding: 6px 12px; border-radius: 4px;">
+                    <option value="">Select a container...</option>
+                </select>
+            </div>
+            <pre id="log-output-box" class="log-output">Select a running container to view stdout/stderr stream...</pre>
+        </div>
+    </div>
 
     <script>
-        // Update slider value display
+        // Tab switching logic
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            event.currentTarget.classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+
+            if (tabName === 'queue') fetchQueue();
+            if (tabName === 'logs') populateLogDropdown();
+        }
+
         const slider = document.getElementById('threshold-slider');
         const thresholdVal = document.getElementById('val-threshold');
         slider.oninput = function() { thresholdVal.textContent = this.value; }
@@ -163,7 +258,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: action })
                 });
-                fetchMetrics(); // Force refresh immediately after action
+                fetchMetrics();
             } catch (err) {
                 console.error('Failed to dispatch action', err);
             }
@@ -203,9 +298,9 @@
                         <td>$${c.burnRate.toFixed(4)}</td>
                         <td>
                             <div class="btn-group">
-                                <button onclick="triggerAction('${c.id}', 'start')">Start</button>
-                                <button onclick="triggerAction('${c.id}', 'stop')">Stop</button>
-                                <button onclick="triggerAction('${c.id}', 'restart')">Restart</button>
+                                <button onclick="triggerAction('${c.fullId}', 'start')">Start</button>
+                                <button onclick="triggerAction('${c.fullId}', 'stop')">Stop</button>
+                                <button onclick="triggerAction('${c.fullId}', 'restart')">Restart</button>
                             </div>
                         </td>
                     </tr>`;
@@ -221,7 +316,89 @@
             }
         }
 
-        // Poll API every 3 seconds
+        async function deployContainer() {
+            const rawConfig = document.getElementById('deploy-config').value;
+            const outputBox = document.getElementById('deploy-result');
+            try {
+                const config = JSON.parse(rawConfig);
+                outputBox.className = "audit-output";
+                outputBox.textContent = "Running NIST SP 800-190 compliance check and queueing deployment...";
+
+                const res = await fetch('/api/containers/deploy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const result = await res.json();
+
+                if (!res.ok) {
+                    outputBox.className = "audit-output fail";
+                    outputBox.textContent = `[AUDIT FAILED] Status ${res.status}\n\n` + JSON.stringify(result, null, 2);
+                } else {
+                    outputBox.className = "audit-output";
+                    outputBox.textContent = `[SUCCESS] Audit Passed & Deployment Queued!\nJob ID: ${result.jobId}\n\n` + JSON.stringify(result, null, 2);
+                }
+            } catch (err) {
+                outputBox.className = "audit-output fail";
+                outputBox.textContent = "Invalid JSON Manifest or Server Error: " + err.message;
+            }
+        }
+
+        async function fetchQueue() {
+            try {
+                const res = await fetch('/api/jobs');
+                const data = await res.json();
+                document.getElementById('val-jobs').textContent = data.counts.waiting + data.counts.active;
+
+                let html = '';
+                data.jobs.forEach(j => {
+                    html += `
+                    <tr>
+                        <td style="font-family: monospace;">${j.id}</td>
+                        <td>${j.name.toUpperCase()}</td>
+                        <td style="font-family: monospace; font-size: 12px; color: var(--text-muted);">${JSON.stringify(j.data)}</td>
+                        <td>${new Date(j.timestamp).toLocaleTimeString()}</td>
+                    </tr>`;
+                });
+                document.getElementById('job-table-body').innerHTML = html || '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No jobs in queue</td></tr>';
+            } catch (err) {
+                console.error('Failed to fetch queue', err);
+            }
+        }
+
+        async function populateLogDropdown() {
+            try {
+                const res = await fetch('/api/containers');
+                const data = await res.json();
+                const select = document.getElementById('log-container-select');
+                let options = '<option value="">Select a container...</option>';
+                data.forEach(c => {
+                    options += `<option value="${c.fullId}">${c.name} (${c.id})</option>`;
+                });
+                select.innerHTML = options;
+            } catch (err) {
+                console.error('Failed to populate logs', err);
+            }
+        }
+
+        async function fetchLogs() {
+            const containerId = document.getElementById('log-container-select').value;
+            const logBox = document.getElementById('log-output-box');
+            if (!containerId) {
+                logBox.textContent = "Select a running container to view stdout/stderr stream...";
+                return;
+            }
+            logBox.textContent = "Fetching log stream...";
+            try {
+                const res = await fetch(`/api/containers/${containerId}/logs`);
+                const logs = await res.text();
+                logBox.textContent = logs || "No logs available for this container.";
+            } catch (err) {
+                logBox.textContent = "Error fetching logs: " + err.message;
+            }
+        }
+
+        // Poll metrics every 3 seconds
         setInterval(fetchMetrics, 3000);
         fetchMetrics();
     </script>
