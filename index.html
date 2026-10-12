@@ -132,6 +132,7 @@
         <div class="tab" onclick="switchTab('deploy')">Deploy and audit</div>
         <div class="tab" onclick="switchTab('queue')">Job queue</div>
         <div class="tab" onclick="switchTab('logs')">Live logs</div>
+        <div class="tab" onclick="switchTab('minecraft')">Minecraft Console</div>
     </div>
 
     <!-- TAB 1: CONTAINERS -->
@@ -231,6 +232,44 @@
                 </select>
             </div>
             <pre id="log-output-box" class="log-output">Select a running container to view stdout/stderr stream...</pre>
+        </div>
+    </div>
+
+    <!-- TAB 5: MINECRAFT SERVER CONSOLE -->
+    <div id="tab-minecraft" class="tab-content">
+        <div class="server-dashboard" style="display: grid; grid-template-columns: 250px 1fr; gap: 20px;">
+            <!-- Side Navigation -->
+            <nav style="background: var(--bg-panel); padding: 20px; border-radius: 6px; border: 1px solid var(--border);">
+                <h3 style="margin-top: 0;">my-minecraft-server</h3>
+                <ul style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px;">
+                    <li style="color: var(--accent); font-weight: bold; cursor: pointer;">Terminal Console</li>
+                    <li style="color: var(--text-muted); cursor: pointer;">File Manager</li>
+                    <li style="color: var(--text-muted); cursor: pointer;">Databases</li>
+                    <li style="color: var(--text-muted); cursor: pointer;">Schedules</li>
+                    <li style="color: var(--text-muted); cursor: pointer;">Network & Ports</li>
+                </ul>
+            </nav>
+
+            <!-- Main Console Area -->
+            <main>
+                <div class="power-bar" style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <button style="background: #166534; color: white;">Start</button>
+                    <button style="background: #2563eb; color: white;">Restart</button>
+                    <button style="background: #991b1b; color: white;">Stop</button>
+                    <button style="background: #7f1d1d; color: white;">Kill</button>
+                </div>
+
+                <!-- Terminal Window -->
+                <div style="background: #000; border-radius: 6px; padding: 15px; font-family: monospace; height: 400px; overflow-y: auto; color: #a3a3a3;">
+                    <div>[Server thread/INFO]: Starting minecraft server version 1.20.4</div>
+                    <div>[Server thread/INFO]: Loading properties</div>
+                    <div>[Server thread/INFO]: Default game type: SURVIVAL</div>
+                    <div style="color: #4ade80;">[Server thread/INFO]: Done (2.143s)! For help, type "help"</div>
+                </div>
+                
+                <!-- Command Input -->
+                <input type="text" placeholder="Type a command..." style="width: 100%; margin-top: 10px; padding: 10px; background: var(--bg-panel); border: 1px solid var(--border); color: white; border-radius: 4px;">
+            </main>
         </div>
     </div>
 
