@@ -197,5 +197,103 @@ app.get('/api/containers/:id/logs', async (req, res) => {
     }
 });
 
+// ============================================================================
+// 4. SPECIALIZED WORKLOAD: MINECRAFT INTEGRATION ENDPOINTS
+// ============================================================================
+
+// A. Deploy & Audit Minecraft Container via NIST Auditor
+app.post('/api/minecraft/deploy', async (req, res) => {
+    const auditResult = NISTAuditor.auditManifest(req.body);
+    if (!auditResult.approved) {
+        return res.status(422).json({
+            status: 'Audit Failed',
+            code: 422,
+            auditLog: auditResult.auditLog
+        });
+    }
+    try {
+        const container = await docker.createContainer(req.body);
+        await container.start();
+
+        // Attach to stdout/stderr streams to monitor events
+        const logStream = await container.logs({
+            follow: true,
+            stdout: true,
+            stderr: true,
+            timestamps: true
+        });
+
+        logStream.on('data', (chunk) => {
+            const logLine = chunk.toString('utf8');
+            if (logLine.includes('joined the game')) {
+                console.log(`[MINECRAFT EVENT] Player Connected: ${logLine}`);
+            }
+        });
+
+        res.status(201).json({ message: 'Minecraft instance secured and running.', id: container.id, auditLog: auditResult.auditLog });
+    } catch (err) {
+        res.status(500).json({ error: 'Deployment execution failed.', details: err.message });
+    }
+});
+
+// B. Dispatch Live Console Commands into Minecraft Terminal (stdin)
+app.post('/api/minecraft/:id/command', async (req, res) => {
+    const { command } = req.body;
+    try {
+        const container = docker.getContainer(req.params.id);
+        const attachStream = await container.attach({ stream: true, stdin: true });
+        
+        attachStream.write(command + '\n');
+        attachStream.end();
+
+        res.status(200).json({ status: 'Command dispatched successfully' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to dispatch command to Minecraft terminal.' });
+    }
+});
+
+// C. FinOps Energy Telemetry & Player Analytics for Minecraft
+app.get('/api/minecraft/:id/telemetry', async (req, res) => {
+    try {
+        const container = docker.getContainer(req.params.id);
+        const stats = await container.stats({ stream: false });
+
+        const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
+        const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
+        const numberCpus = stats.cpu_stats.online_cpus || 1;
+        
+        let cpuPercent = 0.0;
+        if (systemDelta > 0.0 && cpuDelta > 0.0) {
+            cpuPercent = (cpuDelta / systemDelta) * numberCpus * 100.0;
+        }
+
+        const memUsageGB = (stats.memory_stats.usage / (1024 * 1024 * 1024)).toFixed(2);
+        const activePlayers = parseInt(req.query.players || 0); 
+
+        // FinOps Power Draw Calculations
+        const BASE_IDLE_WATTS = 45.0;
+        const WATTS_PER_CPU_PERCENT = 1.2;
+        const WATTS_PER_PLAYER = 0.5;
+        const KWH_COST = 0.12; 
+
+        const currentWatts = BASE_IDLE_WATTS + (cpuPercent * WATTS_PER_CPU_PERCENT) + (activePlayers * WATTS_PER_PLAYER);
+        const hourlyRunningCost = (currentWatts / 1000) * KWH_COST;
+
+        res.status(200).json({
+            metrics: {
+                cpu_percent: parseFloat(cpuPercent.toFixed(2)),
+                memory_gb: parseFloat(memUsageGB),
+                active_players: activePlayers
+            },
+            finops: {
+                power_draw_watts: parseFloat(currentWatts.toFixed(2)),
+                burn_rate_per_hour: parseFloat(hourlyRunningCost.toFixed(5))
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch cgroups telemetry for Minecraft.' });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`KoraGT Unified Engine Active on Port ${PORT}`));
