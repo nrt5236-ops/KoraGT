@@ -4,19 +4,12 @@ const { Queue, Worker } = require('bullmq');
 const path = require('path');
 
 // ============================================================================
-// 0. HOST HARDWARE PROFILE (Machine-Specific Specs for FinOps Energy Modeling)
+// 0. HOST HARDWARE PROFILE (Baseline Reference for Power Scaling)
 // ============================================================================
-/**
- * Configure your physical host hardware specifications here. 
- * This data is used to calculate thermodynamic power draw and financial burn rates 
- * based on real-time container CPU utilization percentages.
- */
 const HOST_HARDWARE_PROFILE = {
     machineName: 'Central-Minnesota-Custom-Rig',
     totalCores: 8,
-    baseIdleWatts: 45.0,          // System power draw at 0% load
-    maxLoadWatts: 130.0,         // Peak power draw at 100% full core saturation
-    wattsPerActivePlayer: 0.5,   // Auxiliary power overhead per active user/player
+    maxTdpWatts: 125.0,         // Maximum Thermal Design Power (TDP) wattage for the processor
     kwhCostUsd: 0.12             // Local electricity rate ($0.12 per kWh)
 };
 
@@ -71,7 +64,7 @@ class NISTAuditor {
 }
 
 // ============================================================================
-// 2. MODULE: FINOPS & HARDWARE-AWARE POWER MAPPING ENGINE
+// 2. MODULE: FINOPS & PROGRAM-LEVEL POWER MAPPING ENGINE
 // ============================================================================
 class FinOpsEngine {
     constructor(docker, hardwareProfile) {
@@ -79,21 +72,19 @@ class FinOpsEngine {
         this.hardware = hardwareProfile;
     }
 
-    // Mathematical power estimation using hardware profile and CPU percentage
-    calculatePowerUsage(cpuPercent, activePlayers = 0) {
-        const cpuRatio = Math.max(cpuPercent, 0) / 100.0;
-        const wattageSpan = this.hardware.maxLoadWatts - this.hardware.baseIdleWatts;
+    // Calculates power purely based on the individual container/program's CPU usage ratio
+    calculateProgramPower(cpuPercent, activePlayers = 0) {
+        // Normalize cpuPercent (e.g., 6.4%) across total system cores
+        const normalizedCpuRatio = Math.max(cpuPercent, 0) / 100.0;
         
-        const currentWatts = this.hardware.baseIdleWatts + 
-                             (cpuRatio * wattageSpan) + 
-                             (activePlayers * this.hardware.wattsPerActivePlayer);
-                             
-        const hourlyCost = (currentWatts / 1000.0) * this.hardware.kwhCostUsd;
+        // Program power draw is its direct proportional slice of the processor's TDP + player auxiliary load
+        const programWatts = (normalizedCpuRatio * this.hardware.maxTdpWatts) + (activePlayers * 0.5);
+        const hourlyCost = (programWatts / 1000.0) * this.hardware.kwhCostUsd;
 
         return {
-            power_draw_watts: parseFloat(currentWatts.toFixed(2)),
+            power_draw_watts: parseFloat(programWatts.toFixed(2)),
             burn_rate_per_hour: parseFloat(hourlyCost.toFixed(5)),
-            hardware_profile: this.hardware.machineName
+            hardware_reference: this.hardware.machineName
         };
     }
 
@@ -121,7 +112,7 @@ class FinOpsEngine {
                 }
             }
 
-            const powerEstimate = this.calculatePowerUsage(cpuUsagePct, 0);
+            const powerMetrics = this.calculateProgramPower(cpuUsagePct, 0);
 
             dashboardData.push({
                 name: c.Names[0].replace('/', ''),
@@ -131,8 +122,8 @@ class FinOpsEngine {
                 status: c.State,
                 cpu: parseFloat(cpuUsagePct.toFixed(1)),
                 memory: parseFloat(memoryUsageMb.toFixed(0)),
-                power_draw_watts: powerEstimate.power_draw_watts,
-                burnRate: powerEstimate.burn_rate_per_hour
+                power_draw_watts: powerMetrics.power_draw_watts,
+                burnRate: powerMetrics.burn_rate_per_hour
             });
         }
         return dashboardData;
@@ -287,7 +278,7 @@ app.post('/api/minecraft/:id/command', async (req, res) => {
     }
 });
 
-// C. Hardware-Aware FinOps Energy Telemetry & Player Analytics for Minecraft
+// C. Program-Level FinOps Energy Telemetry & Player Analytics for Minecraft
 app.get('/api/minecraft/:id/telemetry', async (req, res) => {
     try {
         const container = docker.getContainer(req.params.id);
@@ -305,22 +296,22 @@ app.get('/api/minecraft/:id/telemetry', async (req, res) => {
         const memUsageGB = (stats.memory_stats.usage / (1024 * 1024 * 1024)).toFixed(2);
         const activePlayers = parseInt(req.query.players || 0); 
 
-        // Use our hardware profile to calculate power estimation from CPU percent
-        const powerEstimate = finOps.calculatePowerUsage(cpuPercent, activePlayers);
+        // Calculates power based directly on this specific container/program's CPU usage
+        const powerMetrics = finOps.calculateProgramPower(cpuPercent, activePlayers);
 
         res.status(200).json({
-            hardware_profile: HOST_HARDWARE_PROFILE.machineName,
+            hardware_reference: HOST_HARDWARE_PROFILE.machineName,
             metrics: {
                 cpu_percent: parseFloat(cpuPercent.toFixed(2)),
                 memory_gb: parseFloat(memUsageGB),
                 active_players: activePlayers
             },
-            finops: powerEstimate
+            finops: powerMetrics
         });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch cgroups telemetry for Minecraft.' });
+        res.status(500).json({ error: 'Failed to fetch program-level telemetry for Minecraft.' });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`KoraGT Unified Engine Active on Port ${PORT} [Hardware Profile: ${HOST_HARDWARE_PROFILE.machineName}]`));
+app.listen(PORT, () => console.log(`KoraGT Unified Engine Active on Port [Program-Level FinOps Enabled]`));
