@@ -4,12 +4,12 @@ const { Queue, Worker } = require('bullmq');
 const path = require('path');
 
 // ============================================================================
-// 0. HOST HARDWARE PROFILE (Baseline Reference for Power Scaling)
+// 0. HOST HARDWARE PROFILE (Machine-Specific Specs for FinOps Energy Modeling)
 // ============================================================================
 const HOST_HARDWARE_PROFILE = {
     machineName: 'Central-Minnesota-Custom-Rig',
     totalCores: 8,
-    maxTdpWatts: 125.0,         // Maximum Thermal Design Power (TDP) wattage for the processor
+    maxTdpWatts: 125.0,          // Maximum Thermal Design Power (TDP) wattage for the processor
     kwhCostUsd: 0.12             // Local electricity rate ($0.12 per kWh)
 };
 
@@ -64,7 +64,7 @@ class NISTAuditor {
 }
 
 // ============================================================================
-// 2. MODULE: FINOPS & PROGRAM-LEVEL POWER MAPPING ENGINE
+// 2. MODULE: FINOPS & PROGRAM-LEVEL POWER MAPPING ENGINE (WITH CONSOLE LOGS)
 // ============================================================================
 class FinOpsEngine {
     constructor(docker, hardwareProfile) {
@@ -72,14 +72,13 @@ class FinOpsEngine {
         this.hardware = hardwareProfile;
     }
 
-    // Calculates power purely based on the individual container/program's CPU usage ratio
     calculateProgramPower(cpuPercent, activePlayers = 0) {
-        // Normalize cpuPercent (e.g., 6.4%) across total system cores
         const normalizedCpuRatio = Math.max(cpuPercent, 0) / 100.0;
-        
-        // Program power draw is its direct proportional slice of the processor's TDP + player auxiliary load
         const programWatts = (normalizedCpuRatio * this.hardware.maxTdpWatts) + (activePlayers * 0.5);
         const hourlyCost = (programWatts / 1000.0) * this.hardware.kwhCostUsd;
+
+        // Live console logging for terminal side-by-side verification screenshots
+        console.log(`[FINOPS TELEMETRY] Rig: ${this.hardware.machineName} | CPU: ${cpuPercent.toFixed(1)}% | Power Draw: ${programWatts.toFixed(2)}W | Burn Rate: $${hourlyCost.toFixed(4)}/hr`);
 
         return {
             power_draw_watts: parseFloat(programWatts.toFixed(2)),
@@ -296,7 +295,6 @@ app.get('/api/minecraft/:id/telemetry', async (req, res) => {
         const memUsageGB = (stats.memory_stats.usage / (1024 * 1024 * 1024)).toFixed(2);
         const activePlayers = parseInt(req.query.players || 0); 
 
-        // Calculates power based directly on this specific container/program's CPU usage
         const powerMetrics = finOps.calculateProgramPower(cpuPercent, activePlayers);
 
         res.status(200).json({
@@ -314,4 +312,4 @@ app.get('/api/minecraft/:id/telemetry', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`KoraGT Unified Engine Active on Port [Program-Level FinOps Enabled]`));
+app.listen(PORT, () => console.log(`KoraGT Unified Engine Active on Port ${PORT} [Hardware Profile: ${HOST_HARDWARE_PROFILE.machineName}]`));
